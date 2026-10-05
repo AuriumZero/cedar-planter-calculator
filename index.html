@@ -147,8 +147,9 @@
   .cut-step-num { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; flex-shrink: 0; background: var(--bg2); color: var(--text2); border: 0.5px solid var(--border2); }
   .cut-step-label { color: var(--text); }
   .cut-step-sub { color: var(--text2); font-size: 12px; }
-  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 1.5rem; }
-  @media (max-width: 480px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } }
+  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
+  .summary-grid-screws { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 1.5rem; }
+  @media (max-width: 480px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } .summary-grid-screws { grid-template-columns: repeat(2, 1fr); } }
   .metric { background: var(--bg2); border-radius: var(--radius); padding: 14px 16px; }
   .metric .val { font-size: 22px; font-weight: 600; margin-bottom: 2px; }
   .metric .lbl { font-size: 11px; color: var(--text2); }
@@ -423,7 +424,19 @@ function renderCutList(pieces,legInfo,trimResult){
   }).join('');
   return `<div class="cut-list"><div class="cut-list-header"><div>Piece</div><div>Dims (L \u00d7 W)</div><div>Per unit</div><div>Total qty</div><div>Lin. ft</div></div>${rows}</div>`;
 }
-function renderSummary(legInfo,trimResult,sidePickets,price,qty,pieces){
+function calcScrews(configs){
+  // Per build per unit:
+  //   L > 48": 6x 1" screws per board-height row (depthRows) + 4x 1.25" screws
+  //   L <= 48": 4x 1" screws per board-height row (depthRows) + 4x 1.25" screws
+  let screws1in=0, screws125in=0;
+  configs.forEach(c=>{
+    const perRow = c.L > 48 ? 6 : 4;
+    screws1in   += perRow * c.depthRows * c.qty;
+    screws125in += 4 * c.qty;
+  });
+  return {screws1in, screws125in};
+}
+function renderSummary(legInfo,trimResult,sidePickets,price,qty,pieces,configs){
   const total=legInfo.legPickets+legInfo.extraLedgerPicket+trimResult.pickets+sidePickets.length;
   const cost=total*price,sw=sidePickets.reduce((s,p)=>s+p.waste,0),su=sidePickets.length*USABLE;
   const eff=su>0?Math.round((1-sw/su)*100):0;
@@ -434,11 +447,16 @@ function renderSummary(legInfo,trimResult,sidePickets,price,qty,pieces){
   const nonGangCuts=legInfo.legStrips.reduce((s,st)=>s+st.pieces.length,0)+trimResult.strips.reduce((s,st)=>s+st.pieces.length,0);
   const totalSawSetups=gangSetups+nonGangCuts;
   const qtyNote=qty>1?` <span style="color:var(--text2);font-size:12px">(${qty} units \u00d7 ${fmtMoney(cost/qty)} ea)</span>`:'';
+  const {screws1in, screws125in} = configs ? calcScrews(configs) : {screws1in:0, screws125in:0};
   return `<div class="summary-grid">
     <div class="metric"><div class="val">${total}</div><div class="lbl">Total pickets</div></div>
     <div class="metric highlight"><div class="val">${fmtMoney(cost)}${qtyNote}</div><div class="lbl">Est. material cost</div></div>
     <div class="metric"><div class="val">${eff}%</div><div class="lbl">Board efficiency</div></div>
     <div class="metric"><div class="val">${totalSawSetups}</div><div class="lbl">Total saw setups</div></div>
+  </div>
+  <div class="summary-grid-screws">
+    <div class="metric"><div class="val">${screws1in}</div><div class="lbl">1\u2033 screws (side boards)</div></div>
+    <div class="metric"><div class="val">${screws125in}</div><div class="lbl">1\u00bc\u2033 screws (floor ledgers)</div></div>
   </div>`;
 }
 function renderMultiCutList(allBuildData, legInfo, trimResult){
@@ -957,7 +975,7 @@ function calcAuto(){
 
   document.getElementById('auto-cut-list').innerHTML = renderMultiCutList(allBuildData, combinedLegInfo, trimResult);
   document.getElementById('auto-rip').innerHTML = renderRipCutSummary(combinedLegInfo, trimResult);
-  document.getElementById('auto-summary').innerHTML = renderSummary(combinedLegInfo, trimResult, sidePickets, price, configs.reduce((s,c)=>s+c.qty,0), allPieces);
+  document.getElementById('auto-summary').innerHTML = renderSummary(combinedLegInfo, trimResult, sidePickets, price, configs.reduce((s,c)=>s+c.qty,0), allPieces, configs);
   document.getElementById('auto-gang').innerHTML = buildGangGuide(allPieces);
   document.getElementById('auto-pickets').innerHTML = renderPicketVis(combinedLegInfo, trimResult, sidePickets);
   res.style.display='block';
