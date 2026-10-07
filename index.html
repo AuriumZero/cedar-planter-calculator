@@ -188,9 +188,15 @@
   </div>
 
   <div id="section-auto" class="section active">
-    <div class="price-row" style="margin-bottom:1rem">
-      <label>PRICE PER PICKET</label>
-      <div class="price-input-wrap"><span>$</span><input type="number" id="price-per-picket" value="3.68" min="0" step="0.01"></div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:1rem;align-items:flex-end">
+      <div class="price-row">
+        <label>6FT PICKET PRICE</label>
+        <div class="price-input-wrap"><span>$</span><input type="number" id="price-per-picket" value="3.68" min="0" step="0.01"></div>
+      </div>
+      <div class="price-row" id="price-8ft-row" style="display:none">
+        <label>8FT PICKET PRICE <span style="font-size:10px;color:var(--text3)">(trellis back legs)</span></label>
+        <div class="price-input-wrap"><span>$</span><input type="number" id="price-per-picket-8ft" value="5.79" min="0" step="0.01"></div>
+      </div>
     </div>
     <div class="build-rows" id="build-rows"></div>
     <button class="add-build-btn" onclick="addBuildRow()"><i class="ti ti-plus" style="font-size:13px;vertical-align:-2px;margin-right:4px"></i>Add another size</button>
@@ -436,9 +442,12 @@ function calcScrews(configs){
   });
   return {screws1in, screws125in};
 }
-function renderSummary(legInfo,trimResult,sidePickets,price,qty,pieces,configs){
-  const total=legInfo.legPickets+legInfo.extraLedgerPicket+trimResult.pickets+sidePickets.length;
-  const cost=total*price,sw=sidePickets.reduce((s,p)=>s+p.waste,0),su=sidePickets.length*USABLE;
+function renderSummary(legInfo,trimResult,sidePickets,price,qty,pieces,configs,backLegPickets,price8ft){
+  backLegPickets=backLegPickets||0; price8ft=price8ft||0;
+  const stdPickets=legInfo.legPickets+legInfo.extraLedgerPicket+trimResult.pickets+sidePickets.length;
+  const total=stdPickets+backLegPickets;
+  const costStd=stdPickets*price, costBack=backLegPickets*price8ft, cost=costStd+costBack;
+  const sw=sidePickets.reduce((s,p)=>s+p.waste,0),su=sidePickets.length*USABLE;
   const eff=su>0?Math.round((1-sw/su)*100):0;
   const gangSetups=pieces.filter(p=>p.type==='long'||p.type==='short').reduce((s,p)=>{
     const {totalGangs,cutsPerPicket}=gangCalc(p);
@@ -446,14 +455,16 @@ function renderSummary(legInfo,trimResult,sidePickets,price,qty,pieces,configs){
   },0);
   const nonGangCuts=legInfo.legStrips.reduce((s,st)=>s+st.pieces.length,0)+trimResult.strips.reduce((s,st)=>s+st.pieces.length,0);
   const totalSawSetups=gangSetups+nonGangCuts;
-  const qtyNote=qty>1?` <span style="color:var(--text2);font-size:12px">(${qty} units \u00d7 ${fmtMoney(cost/qty)} ea)</span>`:'';
+  const qtyNote=qty>1?` <span style="color:var(--text2);font-size:12px">(${qty} units)</span>`:'';
   const {screws1in, screws125in} = configs ? calcScrews(configs) : {screws1in:0, screws125in:0};
+  const backLegTile = backLegPickets>0 ? `<div class="metric"><div class="val">${backLegPickets}</div><div class="lbl">8ft pickets (back legs) \u00b7 ${fmtMoney(costBack)}</div></div>` : '';
   return `<div class="summary-grid">
-    <div class="metric"><div class="val">${total}</div><div class="lbl">Total pickets</div></div>
-    <div class="metric highlight"><div class="val">${fmtMoney(cost)}${qtyNote}</div><div class="lbl">Est. material cost</div></div>
+    <div class="metric"><div class="val">${stdPickets}</div><div class="lbl">6ft pickets \u00b7 ${fmtMoney(costStd)}</div></div>
+    <div class="metric highlight"><div class="val">${fmtMoney(cost)}${qtyNote}</div><div class="lbl">Est. total material cost</div></div>
     <div class="metric"><div class="val">${eff}%</div><div class="lbl">Board efficiency</div></div>
     <div class="metric"><div class="val">${totalSawSetups}</div><div class="lbl">Total saw setups</div></div>
   </div>
+  ${backLegTile ? `<div class="summary-grid-screws">${backLegTile}</div>` : ''}
   <div class="summary-grid-screws">
     <div class="metric"><div class="val">${screws1in}</div><div class="lbl">1\u2033 screws (side boards)</div></div>
     <div class="metric"><div class="val">${screws125in}</div><div class="lbl">1\u00bc\u2033 screws (structural/legs)</div></div>
@@ -625,25 +636,34 @@ function renderPicketVisPrint(legInfo,trimResult,sidePickets){
   </div>`;
 }
 
-function renderRipCutSummary(legInfo,trimResult){
+function renderRipCutSummary(legInfo,trimResult,backLegPickets){
+  backLegPickets=backLegPickets||0;
   const totalLegPickets=legInfo.legPickets+(legInfo.extraLedgerPicket||0);
   const legDesc=planterType==='frame'
     ?`Each picket ripped into 2 leg strips of 72\u2033`
     :planterType==='trellis'
-      ?`Each picket ripped into 2 strips of 72\u2033 (legs, back legs &amp; trellis strips share this pool)`
+      ?`Each 6ft picket ripped into 2 strips of 72\u2033 (legs &amp; trellis strips)`
       :`Each picket ripped into 2 leg strips + 1 ledger strip of 72\u2033`;
   const legExtra=legInfo.extraLedgerPicket
     ?` <span class="tag tag-warn">+1 extra for 2nd ledger</span>`
     :'';
+  const backLegRow=backLegPickets>0?`
+    <div class="rip-row">
+      <div>
+        <span class="rip-count">${backLegPickets} 8ft picket${backLegPickets!==1?'s':''}</span>
+        to rip cut for trellis back legs
+        <div class="rip-note">Each 8ft picket ripped into 2 back-leg strips of 96\u2033</div>
+      </div>
+    </div>`:'';
   return `<div class="rip-summary">
     <div class="rip-summary-header">Rip cut summary</div>
     <div class="rip-row">
       <div>
-        <span class="rip-count">${totalLegPickets} picket${totalLegPickets!==1?'s':''}</span>
+        <span class="rip-count">${totalLegPickets} 6ft picket${totalLegPickets!==1?'s':''}</span>
         to rip cut for legs${planterType!=='frame'?' &amp; ledgers':''}${legExtra}
         <div class="rip-note">${legDesc}</div>
       </div>
-    </div>
+    </div>${backLegRow}
     <div class="rip-row" style="border-bottom:none">
       <div>
         <span class="rip-count">${trimResult.pickets} picket${trimResult.pickets!==1?'s':''}</span>
@@ -917,18 +937,24 @@ function calcAuto(){
     return { config:c, ...bp };
   });
 
+  // Show/hide 8ft price input based on whether any trellis builds exist
+  const hasTrellis = configs.some(c=>c.type==='trellis');
+  document.getElementById('price-8ft-row').style.display = hasTrellis ? '' : 'none';
+  const price8ft = parseFloat(document.getElementById('price-per-picket-8ft').value) || 0;
+
   // ── Pool all leg/trellis strip pieces across builds ───────────────────────
   const legPool = [];
+  const backLegPool = []; // 8ft pickets for trellis back legs, packed separately
   allBuildData.forEach(bd => {
     const c = bd.config;
     planterType = c.type;
     // Standard legs
     const stdS = applySplit(c.H-0.5, bd.numLegsStd*c.qty, LEG_SPLIT_THRESHOLD);
     if(stdS.qty>0) legPool.push({name:`${c.label} — Legs`, type:'leg', qty:stdS.qty, length:stdS.length, buildLabel:c.label});
-    // Back legs
+    // Back legs (trellis only) — use 8ft pickets (96"), packed separately
     if(bd.numLegsBack>0){
-      const backS = applySplit(c.H+c.TH, bd.numLegsBack*c.qty, LEG_SPLIT_THRESHOLD);
-      if(backS.qty>0) legPool.push({name:`${c.label} — Back legs`, type:'leg', qty:backS.qty, length:backS.length, buildLabel:c.label});
+      const backS = applySplit(c.H+c.TH, bd.numLegsBack*c.qty, 96);
+      if(backS.qty>0) backLegPool.push({name:`${c.label} — Back legs (8ft)`, type:'leg', qty:backS.qty, length:backS.length, buildLabel:c.label});
     }
     // Trellis strips
     if(bd.tStripS && bd.tStripS.qty>0){
@@ -940,6 +966,7 @@ function calcAuto(){
     }
   });
   const legResult = packIntoStrips(legPool, LEG_STRIPS_PER_PICKET, 72);
+  const backLegResult = packIntoStrips(backLegPool, 2, 96); // 2 strips per 8ft picket
 
   // ── Pool all trim pieces ──────────────────────────────────────────────────
   const trimPool = [];
@@ -974,8 +1001,8 @@ function calcAuto(){
   lastLegInfo = combinedLegInfo; lastTrimResult = trimResult; lastSidePickets = sidePickets;
 
   document.getElementById('auto-cut-list').innerHTML = renderMultiCutList(allBuildData, combinedLegInfo, trimResult);
-  document.getElementById('auto-rip').innerHTML = renderRipCutSummary(combinedLegInfo, trimResult);
-  document.getElementById('auto-summary').innerHTML = renderSummary(combinedLegInfo, trimResult, sidePickets, price, configs.reduce((s,c)=>s+c.qty,0), allPieces, configs);
+  document.getElementById('auto-rip').innerHTML = renderRipCutSummary(combinedLegInfo, trimResult, backLegResult.pickets);
+  document.getElementById('auto-summary').innerHTML = renderSummary(combinedLegInfo, trimResult, sidePickets, price, configs.reduce((s,c)=>s+c.qty,0), allPieces, configs, backLegResult.pickets, price8ft);
   document.getElementById('auto-gang').innerHTML = buildGangGuide(allPieces);
   document.getElementById('auto-pickets').innerHTML = renderPicketVis(combinedLegInfo, trimResult, sidePickets);
   res.style.display='block';
