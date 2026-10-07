@@ -937,8 +937,8 @@ function calcAuto(){
     return { config:c, ...bp };
   });
 
-  // Show/hide 8ft price input based on whether any trellis builds exist
-  const hasTrellis = configs.some(c=>c.type==='trellis');
+  // Show/hide 8ft price input only when a trellis build's back legs exceed 72" (needs 8ft pickets)
+  const hasTrellis = configs.some(c=>c.type==='trellis' && (c.H+c.TH) > 72);
   document.getElementById('price-8ft-row').style.display = hasTrellis ? '' : 'none';
   const price8ft = parseFloat(document.getElementById('price-per-picket-8ft').value) || 0;
 
@@ -951,10 +951,16 @@ function calcAuto(){
     // Standard legs
     const stdS = applySplit(c.H-0.5, bd.numLegsStd*c.qty, LEG_SPLIT_THRESHOLD);
     if(stdS.qty>0) legPool.push({name:`${c.label} — Legs`, type:'leg', qty:stdS.qty, length:stdS.length, buildLabel:c.label});
-    // Back legs (trellis only) — use 8ft pickets (96"), packed separately
+    // Back legs (trellis only) — use 8ft pickets only if H+TH > 72", otherwise fold into standard 6ft pool
     if(bd.numLegsBack>0){
-      const backS = applySplit(c.H+c.TH, bd.numLegsBack*c.qty, 96);
-      if(backS.qty>0) backLegPool.push({name:`${c.label} — Back legs (8ft)`, type:'leg', qty:backS.qty, length:backS.length, buildLabel:c.label});
+      const backLegH = c.H+c.TH;
+      if(backLegH > 72){
+        const backS = applySplit(backLegH, bd.numLegsBack*c.qty, 96);
+        if(backS.qty>0) backLegPool.push({name:`${c.label} — Back legs (8ft)`, type:'leg', qty:backS.qty, length:backS.length, buildLabel:c.label});
+      } else {
+        const backS = applySplit(backLegH, bd.numLegsBack*c.qty, LEG_SPLIT_THRESHOLD);
+        if(backS.qty>0) legPool.push({name:`${c.label} — Back legs`, type:'leg', qty:backS.qty, length:backS.length, buildLabel:c.label});
+      }
     }
     // Trellis strips
     if(bd.tStripS && bd.tStripS.qty>0){
