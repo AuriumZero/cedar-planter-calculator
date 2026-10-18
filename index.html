@@ -436,6 +436,7 @@ function calcScrews(configs){
   //   L <= 48": 4x 1" screws per board-height row (depthRows) + 4x 1.25" screws
   let screws1in=0, screws125in=0;
   configs.forEach(c=>{
+    if(c.type==='standalone') return; // standalone trellis uses different fasteners — not calculated here
     const perRow = c.L > 48 ? 6 : 4;
     screws1in   += perRow * c.depthRows * c.qty;
     screws125in += 4 * c.qty;
@@ -476,8 +477,8 @@ function renderMultiCutList(allBuildData, legInfo, trimResult){
 
   allBuildData.forEach(bd => {
     const c = bd.config;
-    const typeLabel = c.type==='planter'?'Planter with bottom':c.type==='frame'?'Cedar frame':'Planter + trellis';
-    const dimLabel = c.type==='trellis'?`${c.L}″ × ${c.W}″ × ${c.H}″ + ${c.TH}″ trellis`:`${c.L}″ × ${c.W}″ × ${c.H}″`;
+    const typeLabel = c.type==='planter'?'Planter with bottom':c.type==='frame'?'Cedar frame':c.type==='standalone'?'Standalone trellis':'Planter + trellis';
+    const dimLabel = c.type==='trellis'?`${c.L}″ × ${c.W}″ × ${c.H}″ + ${c.TH}″ trellis`:c.type==='standalone'?`${c.L}″ × ${c.H}″`:`${c.L}″ × ${c.W}″ × ${c.H}″`;
     html += `<div class="cut-section-header">${c.label} — ${typeLabel} — ${dimLabel} — Qty: ${c.qty}</div>`;
     bd.pieces.forEach(p => {
       const isFree = p.type==='ledger';
@@ -795,6 +796,32 @@ function buildPieces(L,W,H,TH,depthRows,qty){
   return{pieces,numLegsStd,numLegsBack,rawStdLegH,rawBackLegH,trellisStripCount,rawTrellisStripLen,stdLegS,backLegS,tStripS,tVertS};
 }
 
+function buildStandalonePieces(L, H, qty){
+  // Legs: 2 if L <= 48", 3 if L > 48"
+  const numLegs = L > 48 ? 3 : 2;
+  // End caps: always 2, same height H, rip cut (LEG_W wide)
+  const numEndCaps = 2;
+  // Horizontal strips: span interior width (L - 1.25"), fill height H, spaced 0.5" apart
+  const stripLen = L - 1.25;
+  const stripCount = Math.floor(H / (LEG_W + 0.5));
+
+  const legS = applySplit(H, numLegs * qty, LEG_SPLIT_THRESHOLD);
+  const endCapS = applySplit(H, numEndCaps * qty, LEG_SPLIT_THRESHOLD);
+  const stripS = applySplit(stripLen, stripCount * qty, TRIM_SPLIT_THRESHOLD);
+
+  const pieces = [];
+  if(legS.qty>0) pieces.push({name:'Legs', type:'leg', qtyPerUnit:legS.qty/qty, qty:legS.qty, length:legS.length, width:LEG_W, split:legS.split});
+  if(endCapS.qty>0) pieces.push({name:'End caps', type:'leg', qtyPerUnit:endCapS.qty/qty, qty:endCapS.qty, length:endCapS.length, width:LEG_W, split:endCapS.split});
+  if(stripS.qty>0) pieces.push({name:`Horizontal strips (${stripCount} per unit)`, type:'trellis_strip', qtyPerUnit:stripS.qty/qty, qty:stripS.qty, length:stripS.length, width:LEG_W, split:stripS.split});
+
+  return {pieces, numLegs, numEndCaps, stripCount, stripLen, legS, endCapS, stripS,
+    // Expose these so calcAuto can pool them
+    numLegsStd: 0, numLegsBack: 0, rawStdLegH: 0, rawBackLegH: 0,
+    trellisStripCount: 0, rawTrellisStripLen: 0,
+    stdLegS:{length:0,qty:0,split:false}, backLegS:{length:0,qty:0,split:false},
+    tStripS:{length:0,qty:0,split:false}, tVertS:{length:0,qty:0,split:false}};
+}
+
 // ── Multi-build state ─────────────────────────────────────────────────────────
 let buildIdCounter = 0;
 
@@ -820,11 +847,14 @@ function addBuildRow(defaults){
       <button class="build-type-btn ${d.type==='trellis'?'active':''}" onclick="setBuildType('${id}','trellis',this)">
         <i class="ti ti-fence" style="font-size:12px"></i>Trellis
       </button>
+      <button class="build-type-btn ${d.type==='standalone'?'active':''}" onclick="setBuildType('${id}','standalone',this)">
+        <i class="ti ti-layout-columns" style="font-size:12px"></i>Standalone Trellis
+      </button>
     </div>
     <div class="build-dim-grid">
       <div class="field"><label>LENGTH (in)</label><input type="number" class="b-l" value="${d.L}" min="12" step="0.25"></div>
-      <div class="field"><label>WIDTH (in)</label><input type="number" class="b-w" value="${d.W}" min="12" step="0.25"></div>
-      <div class="field"><label>PLANTER HEIGHT (in)</label><input type="number" class="b-h" value="${d.H}" min="5.5" step="5.5"></div>
+      <div class="field b-w-field" id="${id}-w-field" style="display:${d.type==='standalone'?'none':''}"><label>WIDTH (in)</label><input type="number" class="b-w" value="${d.W}" min="12" step="0.25"></div>
+      <div class="field"><label id="${id}-h-label">${d.type==='standalone'?'HEIGHT (in)':'PLANTER HEIGHT (in)'}</label><input type="number" class="b-h" value="${d.H}" min="5.5" step="${d.type==='standalone'?'0.25':'5.5'}"></div>
       <div class="field b-qty-field"><label>QTY</label>
         <div class="qty-stepper">
           <button onclick="changeBuildQty('${id}',-1)">−</button>
@@ -836,7 +866,7 @@ function addBuildRow(defaults){
     <div class="build-trellis-row" id="${id}-trow" style="display:${d.type==='trellis'?'grid':'none'}">
       <div class="field"><label>TRELLIS HEIGHT (in)</label><input type="number" class="b-t" value="${d.TH}" min="5.5" step="0.25"><span class="hint">Height of trellis above planter</span></div>
     </div>
-    <div class="build-depth-card">
+    <div class="build-depth-card" id="${id}-depth-card" style="display:${d.type==='standalone'?'none':'block'}">
       <div class="build-depth-row">
         <label>Planting depth</label>
         <input type="range" class="b-depth" min="1" max="4" step="1" oninput="updateBuildDepth('${id}')">
@@ -892,6 +922,15 @@ function setBuildType(id, type, btn){
   btn.classList.add('active');
   row.dataset.type = type;
   document.getElementById(id+'-trow').style.display = type==='trellis' ? 'grid' : 'none';
+  // Standalone trellis: hide width + depth, show plain height label
+  const wField = document.getElementById(id+'-w-field');
+  const hLabel = document.getElementById(id+'-h-label');
+  const depthCard = document.getElementById(id+'-depth-card');
+  const hInput = row.querySelector('.b-h');
+  if(wField) wField.style.display = type==='standalone' ? 'none' : '';
+  if(hLabel) hLabel.textContent = type==='standalone' ? 'HEIGHT (in)' : 'PLANTER HEIGHT (in)';
+  if(hInput) hInput.step = type==='standalone' ? '0.25' : '5.5';
+  if(depthCard) depthCard.style.display = type==='standalone' ? 'none' : 'block';
 }
 
 function changeBuildQty(id, d){
@@ -903,7 +942,8 @@ function getBuildConfigs(){
   const configs = [];
   document.querySelectorAll('.build-row').forEach((row, i) => {
     const typeBtn = row.querySelector('.build-type-btn.active');
-    const type = typeBtn ? (typeBtn.textContent.trim().toLowerCase().startsWith('plan') ? 'planter' : typeBtn.textContent.trim().toLowerCase().startsWith('fra') ? 'frame' : 'trellis') : 'planter';
+    const typeText = typeBtn ? typeBtn.textContent.trim().toLowerCase() : '';
+    const type = typeText.startsWith('plan') ? 'planter' : typeText.startsWith('fra') ? 'frame' : typeText.startsWith('standalone') ? 'standalone' : typeText.startsWith('trel') ? 'trellis' : 'planter';
     const L = parseFloat(row.querySelector('.b-l').value) || 72;
     const W = parseFloat(row.querySelector('.b-w').value) || 24;
     const H = parseFloat(row.querySelector('.b-h').value) || 24;
@@ -925,30 +965,51 @@ function calcAuto(){
   if(configs.length === 0){ err.textContent='Add at least one build.'; err.style.display='block'; return; }
   for(let i=0;i<configs.length;i++){
     const c=configs[i];
-    if(!c.L||!c.W||!c.H||c.L<1||c.W<1||c.H<1){ err.textContent=`${c.label}: please enter valid dimensions.`; err.style.display='block'; return; }
+    if(!c.L||!c.H||c.L<1||c.H<1){ err.textContent=`${c.label}: please enter valid dimensions.`; err.style.display='block'; return; }
+    if(c.type!=='standalone'&&(!c.W||c.W<1)){ err.textContent=`${c.label}: please enter a valid width.`; err.style.display='block'; return; }
     if(c.type==='trellis'&&(!c.TH||c.TH<1)){ err.textContent=`${c.label}: please enter a valid trellis height.`; err.style.display='block'; return; }
   }
 
   // Generate pieces per build, tag each piece with its build label
   const allBuildData = configs.map(c => {
     planterType = c.type; // set global for buildPieces/calcLegInfo
-    const bp = buildPieces(c.L, c.W, c.H, c.TH, c.depthRows, c.qty);
+    const bp = c.type === 'standalone'
+      ? buildStandalonePieces(c.L, c.H, c.qty)
+      : buildPieces(c.L, c.W, c.H, c.TH, c.depthRows, c.qty);
     bp.pieces.forEach(p => { p.buildLabel = c.label; p.buildType = c.type; });
     return { config:c, ...bp };
   });
 
-  // Show/hide 8ft price input only when a trellis build's back legs exceed 72" (needs 8ft pickets)
-  const hasTrellis = configs.some(c=>c.type==='trellis' && (c.H+c.TH) > 72);
+  // Show/hide 8ft price input when any build needs 8ft pickets
+  const hasTrellis = configs.some(c=>(c.type==='trellis' && (c.H+c.TH) > 72) || (c.type==='standalone' && c.H > 72));
   document.getElementById('price-8ft-row').style.display = hasTrellis ? '' : 'none';
   const price8ft = parseFloat(document.getElementById('price-per-picket-8ft').value) || 0;
 
   // ── Pool all leg/trellis strip pieces across builds ───────────────────────
   const legPool = [];
-  const backLegPool = []; // 8ft pickets for trellis back legs, packed separately
+  const backLegPool = []; // 8ft pickets for legs/end caps that exceed 72"
   allBuildData.forEach(bd => {
     const c = bd.config;
     planterType = c.type;
-    // Standard legs
+
+    if(c.type === 'standalone'){
+      // Standalone trellis: all legs + end caps are at height H, go to 8ft pool if H > 72"
+      const allStandaloneLegs = bd.numLegs + bd.numEndCaps;
+      if(c.H > 72){
+        const s = applySplit(c.H, allStandaloneLegs*c.qty, 96);
+        if(s.qty>0) backLegPool.push({name:`${c.label} — Legs & end caps (8ft)`, type:'leg', qty:s.qty, length:s.length, buildLabel:c.label});
+      } else {
+        const s = applySplit(c.H, allStandaloneLegs*c.qty, LEG_SPLIT_THRESHOLD);
+        if(s.qty>0) legPool.push({name:`${c.label} — Legs & end caps`, type:'leg', qty:s.qty, length:s.length, buildLabel:c.label});
+      }
+      // Horizontal strips go in leg pool (same rip width as legs)
+      if(bd.stripS && bd.stripS.qty>0){
+        legPool.push({name:`${c.label} — Horizontal strips`, type:'trellis_strip', qty:bd.stripS.qty, length:bd.stripS.length, buildLabel:c.label});
+      }
+      return;
+    }
+
+    // Standard legs (planter / frame / trellis)
     const stdS = applySplit(c.H-0.5, bd.numLegsStd*c.qty, LEG_SPLIT_THRESHOLD);
     if(stdS.qty>0) legPool.push({name:`${c.label} — Legs`, type:'leg', qty:stdS.qty, length:stdS.length, buildLabel:c.label});
     // Back legs (trellis only) — use 8ft pickets only if H+TH > 72", otherwise fold into standard 6ft pool
@@ -978,6 +1039,7 @@ function calcAuto(){
   const trimPool = [];
   allBuildData.forEach(bd => {
     const c = bd.config;
+    if(c.type === 'standalone') return; // standalone trellis has no trim
     const tlS = applySplit(c.L, 2*c.qty, TRIM_SPLIT_THRESHOLD);
     const tsS = applySplit(c.W, 2*c.qty, TRIM_SPLIT_THRESHOLD);
     if(tlS.qty>0) trimPool.push({name:`${c.label} — Trim (long)`, type:'trim', qty:tlS.qty, length:tlS.length, buildLabel:c.label});
